@@ -1,0 +1,71 @@
+name: build-test-push-workflow
+on:
+  pull_request:
+    branches:
+      - main
+  repository_dispatch:
+    types:
+    - trigger-config
+permissions:
+    contents: write
+jobs:
+  Build-Push:
+    runs-on: ubuntu-20.04
+    name: build example and deploy to minikube
+    steps:
+      - name: clone application from github repo.
+        uses: sudosubin/git-clone-action@v1.0.1
+        with:
+          repository: 'tomershalev9/TaskApp'
+          platform: 'github'
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2 
+      - name: build docker image
+        run: |
+          docker build -t tomershalev9/taskapp:v1.0.${{ github.run_id }} .
+      - name: Docker Login
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+      - name: docker push
+        run: |
+          docker push tomershalev9/taskapp:v1.0.${{ github.run_id }}
+
+      - name: checkout
+        uses: actions/checkout@v3
+
+      - name: Update Deployment Manifest
+        run: |
+          sed -i "s|image: tomershalev9/taskapp:v1.0.*|image: tomershalev9/taskapp:v1.0.${{ github.run_id }}|" k8s/taskapp.yaml
+
+      - name: Start minikube
+        uses: medyagh/setup-minikube@master
+
+      - name: Try the cluster !
+        run: kubectl get pods -A        
+      - name: Deploy to minikube
+        run: |
+          cd k8s
+          kubectl apply -f mongo.yaml
+          kubectl apply -f mongo-svc.yaml
+          kubectl apply -f mongo-pv.yaml
+          kubectl apply -f mongo-pvc.yaml
+          kubectl apply -f taskapp.yaml
+          kubectl apply -f taskapp-svc.yaml
+      - name: Take a nap
+        run: sleep 50
+      - name: Test service URLs
+        run: |
+          docker images
+          minikube service list
+          kubectl get pods
+          minikube service tasksapp-svc --url
+          echo "-----------------opening the service-----------------"
+          
+      - name: Commit & Push changes
+        uses: actions-js/push@master
+        with:
+         github_token: ${{ secrets.ACTIONS_KEY }}
